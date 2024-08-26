@@ -1,0 +1,8 @@
+matplotlib
+pandas
+xlrd
+torch
+torchvision
+sklearn
+skimage
+nibabel
