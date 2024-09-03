@@ -1,6 +1,5 @@
 datasets/
-datasets.py
-model.py
+test.ipynb
 notes.txt
 test.py
 utils.py

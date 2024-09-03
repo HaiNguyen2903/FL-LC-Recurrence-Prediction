@@ -6,3 +6,5 @@ torchvision
 sklearn
 skimage
 nibabel
+medpy
+wandb
