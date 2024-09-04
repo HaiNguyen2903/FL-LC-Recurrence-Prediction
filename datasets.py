@@ -15,6 +15,7 @@ from skimage.measure import label, regionprops
 from medpy.filter.smoothing import anisotropic_diffusion
 from PIL import Image
 from typing import List, Tuple
+import pydicom_seg
 
 
 random.seed(42)
@@ -228,7 +229,27 @@ if __name__ == '__main__':
     # print(len(train_ls), len(test_ls), len(val_ls))
     # print(len(dataset.data_list))
 
-    data_len = len(dataset.data_list)
+    data_list = dataset.data_list
+    
+    counter = 0
+    
+    for i, sample in enumerate(data_list):
+        try:
+            dcm = pydicom.dcmread(sample['path'])
+            reader = pydicom_seg.SegmentReader()
+            result = reader.read(dcm)
+            # data = result.segment_data(1)  # numpy array
+            # image = result.segment_image(1)  # SimpleITK image
+            counter += 1
+            print(i, counter)
+        except:
+            continue
+
+    print(counter)
+
+
+
+
 
     
     
