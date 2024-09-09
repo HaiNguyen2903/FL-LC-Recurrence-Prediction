@@ -8,3 +8,4 @@ skimage
 nibabel
 medpy
 wandb
+pydicom_seg

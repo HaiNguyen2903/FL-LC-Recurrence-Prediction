@@ -3,3 +3,5 @@ test.ipynb
 notes.txt
 test.py
 utils.py
+data_segmentation.json
+EDA_segment.ipynb

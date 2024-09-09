@@ -16,7 +16,8 @@ from medpy.filter.smoothing import anisotropic_diffusion
 from PIL import Image
 from typing import List, Tuple
 import pydicom_seg
-
+import json
+from collections import defaultdict
 
 random.seed(42)
 
@@ -218,10 +219,80 @@ class Cancer_Dataset(Dataset):
                 val_ls.append(sample)
 
         return train_ls, test_ls, val_ls
+
+def get_patinents_with_segments(data_list, save_path='data_segmentation.json') -> dict:
+    '''
+    Saving final data dict into json file for further utilization
+    Params:
+        data_list: list of data in format [{'id': patient_id, 'label': label, 'path': .dcm path}]
+    Return:
+        A dictionary in format
+        {
+            id: {
+                'slices_dir': path to dir contains .dcm serie
+                'segment_path': path to .dcm segmentation file
+            }
+        }
+    '''
+    counter = 0
+
+    filtered_data = defaultdict(dict)
+
+    for i, sample in enumerate(data_list):
+        try:
+            dcm = pydicom.dcmread(sample['path'])
+            reader = pydicom_seg.SegmentReader()
+            result = reader.read(dcm)
+
+            # data = result.segment_data(1)  # numpy array
+            # image = result.segment_image(1)  # SimpleITK image
+
+            counter += 1
+            print(i, counter)
+
+            id = sample['id']
+            
+            # get segment path
+            segment_path = sample['path']
+            # get components of the path
+            path_comps = segment_path.split('/')
+            # get dir path which contains both segment folder and normal slice folder
+            shared_dir = '/'.join(path_comps[:-2])
+            
+            # all share dir should only contains 2 subdirs, 1 for segment file and 1 for other .dcm files. There was 1 exception for R01-059
+            if id == 'R01-059':
+                slices_dir = '5.000000-THIN LUNG WINDOW-11284'
+            else:
+                # list all subdirs in shared dir
+                sub_dirs = os.listdir(shared_dir)
+                # verify number of sub dirs
+                assert len(sub_dirs) == 2, f'There are more sub-directories than expected (expected 2, found {len(sub_dirs)}).'
+                # get slices dir based on name (1 dir should contains 'segmentation')
+                slices_dir = sub_dirs[0] if 'segmentation' not in sub_dirs[0] else sub_dirs[1]
+                # get segment dir based on name
+                segment_dir = sub_dirs[0] if 'segmentation' in sub_dirs[0] else sub_dirs[1]
+                # verify slices dir name
+                assert slices_dir != '', 'Slices dir not found.'            
+
+            # save segment path (path from patient root dir for each patient)
+            filtered_data[id]['dcm_dir'] = osp.join(osp.basename(shared_dir), slices_dir)
+            # save folder of dicom slice (path from patient root dir for each patient)
+            filtered_data[id]['segment_dir'] = osp.join(osp.basename(shared_dir), segment_dir)
+        except:
+            continue
+        
+    # Convert and write JSON object to file
+    with open(save_path, "w") as outfile: 
+        json.dump(filtered_data, outfile)
+
+    return
+
+
     
 if __name__ == '__main__':
     data_root = 'datasets/NSCLC/manifest-1622561851074'
     dataset = Cancer_Dataset(data_root)
+
     # train, test, val = dataset.split_by_patients()
 
     # train_ls, test_ls, val_ls = dataset.split_by_patients()
@@ -231,21 +302,7 @@ if __name__ == '__main__':
 
     data_list = dataset.data_list
     
-    counter = 0
-    
-    for i, sample in enumerate(data_list):
-        try:
-            dcm = pydicom.dcmread(sample['path'])
-            reader = pydicom_seg.SegmentReader()
-            result = reader.read(dcm)
-            # data = result.segment_data(1)  # numpy array
-            # image = result.segment_image(1)  # SimpleITK image
-            counter += 1
-            print(i, counter)
-        except:
-            continue
-
-    print(counter)
+    get_patinents_with_segments(data_list)
 
 
 
