@@ -4,4 +4,9 @@ notes.txt
 test.py
 utils.py
 data_segmentation.json
+data_segmentation_filtered.json
+dataset_old.py
 EDA_segment.ipynb
+wandb
+__pycache__
+test.json

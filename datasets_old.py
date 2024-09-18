@@ -18,6 +18,7 @@ from typing import List, Tuple
 import pydicom_seg
 import json
 from collections import defaultdict
+from utils import *
 
 random.seed(42)
 
@@ -220,7 +221,7 @@ class Cancer_Dataset(Dataset):
 
         return train_ls, test_ls, val_ls
 
-def get_patinents_with_segments(data_list, save_path='data_segmentation.json') -> dict:
+def get_patinents_with_segments(data_list, save_path='data_segmentation_filtered.json') -> dict:
     '''
     Saving final data dict into json file for further utilization
     Params:
@@ -229,8 +230,8 @@ def get_patinents_with_segments(data_list, save_path='data_segmentation.json') -
         A dictionary in format
         {
             id: {
-                'slices_dir': path to dir contains .dcm serie
-                'segment_path': path to .dcm segmentation file
+                'dcm_dir': relative path to dir contains .dcm serie (from patient directory)
+                'segment_dir': relative path to .dcm segmentation dir (from patient directory)
             }
         }
     '''
@@ -262,15 +263,22 @@ def get_patinents_with_segments(data_list, save_path='data_segmentation.json') -
             # all share dir should only contains 2 subdirs, 1 for segment file and 1 for other .dcm files. There was 1 exception for R01-059
             if id == 'R01-059':
                 slices_dir = '5.000000-THIN LUNG WINDOW-11284'
+                segment_dir = '1000.000000-3D Slicer segmentation result-15101'
             else:
                 # list all subdirs in shared dir
                 sub_dirs = os.listdir(shared_dir)
                 # verify number of sub dirs
                 assert len(sub_dirs) == 2, f'There are more sub-directories than expected (expected 2, found {len(sub_dirs)}).'
-                # get slices dir based on name (1 dir should contains 'segmentation')
+                
+                # there can be patients without 'segmentation' dir
+                if 'segmentation' not in sub_dirs[0] and 'segmentation' not in sub_dirs[1]:
+                    continue
+                
+                # get slices dir based on name (1 dir should contains 'segmentation'
                 slices_dir = sub_dirs[0] if 'segmentation' not in sub_dirs[0] else sub_dirs[1]
                 # get segment dir based on name
                 segment_dir = sub_dirs[0] if 'segmentation' in sub_dirs[0] else sub_dirs[1]
+                
                 # verify slices dir name
                 assert slices_dir != '', 'Slices dir not found.'            
 
@@ -300,13 +308,15 @@ if __name__ == '__main__':
     # print(len(train_ls), len(test_ls), len(val_ls))
     # print(len(dataset.data_list))
 
-    data_list = dataset.data_list
+    # data_list = dataset.data_list
     
-    get_patinents_with_segments(data_list)
+    # get_patinents_with_segments(data_list)
+
+    with open('data_segmentation_filtered.json', 'r') as f:
+        data = json.load(f)
+
+    for id in data:
+        if 'NA-CT' not in data[id]['dcm_dir'] and 'NA-Thorax' not in data[id]['dcm_dir']:
+            print(id)
 
 
-
-
-
-    
-    
