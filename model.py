@@ -7,62 +7,62 @@ from torch import nn
 import torch.optim as optim
 import argparse
 from tqdm import tqdm
-from dataset import Cancer_Dataset
+from data_roi import Cancer_Dataset
 import wandb
 from sklearn.metrics import recall_score, f1_score
+import os.path as osp
 
+# class CustomCallback:
+#     def __init__(self, early_stop_patience=2, reduce_lr_factor=0.2, reduce_lr_patience=3, reduce_lr_min_lr=0.0000001, checkpoint_path='checkpoint.pth', log_dir='logs'):
+#         # Initialize callback parameters
+#         self.early_stop_patience = early_stop_patience  # Patience for early stopping
+#         self.reduce_lr_factor = reduce_lr_factor  # Factor by which to reduce learning rate
+#         self.reduce_lr_patience = reduce_lr_patience  # Patience for reducing learning rate
+#         self.reduce_lr_min_lr = reduce_lr_min_lr  # Minimum learning rate
+#         self.checkpoint_path = checkpoint_path  # Path to save model checkpoints
+#         # self.log_dir = log_dir  # Directory for logging
 
-class CustomCallback:
-    def __init__(self, early_stop_patience=2, reduce_lr_factor=0.2, reduce_lr_patience=3, reduce_lr_min_lr=0.0000001, checkpoint_path='checkpoint.pth', log_dir='logs'):
-        # Initialize callback parameters
-        self.early_stop_patience = early_stop_patience  # Patience for early stopping
-        self.reduce_lr_factor = reduce_lr_factor  # Factor by which to reduce learning rate
-        self.reduce_lr_patience = reduce_lr_patience  # Patience for reducing learning rate
-        self.reduce_lr_min_lr = reduce_lr_min_lr  # Minimum learning rate
-        self.checkpoint_path = checkpoint_path  # Path to save model checkpoints
-        # self.log_dir = log_dir  # Directory for logging
+#         # Initialize variables for early stopping
+#         self.early_stop_counter = 0  # Counter for early stopping
+#         self.best_val_loss = float('inf')  # Best validation loss
 
-        # Initialize variables for early stopping
-        self.early_stop_counter = 0  # Counter for early stopping
-        self.best_val_loss = float('inf')  # Best validation loss
+#         self.optimizer = None  # Optimizer for training
+#         self.scheduler = None  # Learning rate scheduler
 
-        self.optimizer = None  # Optimizer for training
-        self.scheduler = None  # Learning rate scheduler
+#     def set_optimizer(self, optimizer):
+#         # Set optimizer for training
+#         self.optimizer = optimizer
 
-    def set_optimizer(self, optimizer):
-        # Set optimizer for training
-        self.optimizer = optimizer
+#     def on_epoch_end(self, epoch, val_loss):
+#         # Early Stopping
+#         if val_loss < self.best_val_loss:
+#             self.best_val_loss = val_loss
+#             self.early_stop_counter = 0  # Reset counter if validation loss improves
+#         else:
+#             self.early_stop_counter += 1  # Increment counter if validation loss does not improve
 
-    def on_epoch_end(self, epoch, val_loss):
-        # Early Stopping
-        if val_loss < self.best_val_loss:
-            self.best_val_loss = val_loss
-            self.early_stop_counter = 0  # Reset counter if validation loss improves
-        else:
-            self.early_stop_counter += 1  # Increment counter if validation loss does not improve
+#         if self.early_stop_counter >= self.early_stop_patience:
+#             print("Early stopping triggered!")
+#             return True  # Stop training if early stopping criterion is met
 
-        if self.early_stop_counter >= self.early_stop_patience:
-            print("Early stopping triggered!")
-            return True  # Stop training if early stopping criterion is met
+#         # Reduce LR on Plateau
+#         if self.scheduler is not None:
+#             self.scheduler.step(val_loss)  # Adjust learning rate based on validation loss
 
-        # Reduce LR on Plateau
-        if self.scheduler is not None:
-            self.scheduler.step(val_loss)  # Adjust learning rate based on validation loss
+#         return False  # Continue training
 
-        return False  # Continue training
+#     def on_train_begin(self):
+#         # Initialize Reduce LR on Plateau scheduler
+#         self.scheduler = optim.ReduceLROnPlateau(self.optimizer, mode='min', factor=self.reduce_lr_factor,
+#                                             patience=self.reduce_lr_patience, min_lr=self.reduce_lr_min_lr)
 
-    def on_train_begin(self):
-        # Initialize Reduce LR on Plateau scheduler
-        self.scheduler = optim.ReduceLROnPlateau(self.optimizer, mode='min', factor=self.reduce_lr_factor,
-                                            patience=self.reduce_lr_patience, min_lr=self.reduce_lr_min_lr)
+#     def on_train_end(self):
+#         pass
 
-    def on_train_end(self):
-        pass
+#     def set_model(self, model):
+#         self.model = model  # Set model for the callback
 
-    def set_model(self, model):
-        self.model = model  # Set model for the callback
-
-def load_model(num_classes=2):
+def load_mobilenetv3_model(num_classes=2):
     model = mobilenet_v3_large(pretrained=True, progress=True)
     
     num_features = model.classifier[0].in_features
@@ -75,9 +75,33 @@ def load_model(num_classes=2):
         )
 
     return model
+
+def log_performance(train_loss, train_acc, train_recall, train_f1,
+                    val_loss, val_acc, val_recall, val_f1):
+    # wandb.log({
+    #         'Cross Entropy Loss/Train': train_loss,
+    #         'Cross Entropy Loss/Val': val_loss,
+    #         'Accuracy/Train': train_acc,
+    #         'Accuracy/Val': val_acc,
+    #         'Recall/Train': train_recall,
+    #         'Recall/Val': val_recall,
+    #         'F1 Score/Train': train_f1,
+    #         'F1 Score/Val': val_f1,
+    # })
+    wandb.log({
+        'Train/Loss': train_loss,
+        'Train/Accuracy': train_acc,
+        'Train/Recall': train_recall,
+        'Train/F1 Score': train_f1,
+        'Validation/Loss': val_loss,
+        'Validation/Accuracy': val_acc,
+        'Validation/Recall': val_recall,
+        'Validation/F1 Score': val_f1,
+    })
+    return
     
 
-def train(model, train_config, train_loader, val_loader):
+def train(model, train_config, train_loader, val_loader, save_best=False):
     # Define the loss function
     criterion = nn.CrossEntropyLoss()
 
@@ -85,7 +109,9 @@ def train(model, train_config, train_loader, val_loader):
     optimizer = optim.Adam(model.parameters(), lr=1e-5, weight_decay=1e-4)
 
     epochs = train_config['epochs']
-    batch_size = train_config['train_batch']
+    batch_size = train_config['batch_size']
+    save_dir = train_config['save_dir']
+    model_name = train_config['model_name']
 
     # select device for training
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
@@ -96,6 +122,11 @@ def train(model, train_config, train_loader, val_loader):
     '''
 
     wandb.watch(model, log_freq=1)
+
+    # init score to save best
+    val_best_f1 = -1
+    ep_best = 1
+    best_weights = model.state_dict()
 
     for epoch in range(epochs):
         model.train()
@@ -134,15 +165,7 @@ def train(model, train_config, train_loader, val_loader):
         train_acc = 100 * train_correct / train_total
         train_recall = recall_score(train_y_true, train_y_pred)
         train_f1 = f1_score(train_y_true, train_y_pred)
-
-        print(f'epoch: {epoch+1} \t loss: {round(train_loss, 3)} \t train acc: {round(train_acc, 3)}')
         
-        wandb.log({
-            'train/loss': train_loss, 
-            'train/accuracy': train_acc,
-            'train/recall': train_recall,
-            'train/f1_score': train_f1
-            })
 
         # Evaluate the model on the validation set
         model.eval()
@@ -178,50 +201,63 @@ def train(model, train_config, train_loader, val_loader):
         val_recall = recall_score(val_y_true, val_y_pred)
         val_f1 = f1_score(val_y_true, val_y_pred)
 
-        print(f'epoch: {epoch+1} \t loss: {round(val_loss, 3)} \t val acc: {round(val_acc, 3)}')
-        wandb.log({
-            'validation/loss': val_loss, 
-            'validation/accuracy': val_acc,
-            'validation/recall': val_recall,
-            'validation/f1_score': val_f1
-            })
+        # saving best model based on F1 score
+        if val_f1 > val_best_f1:
+            val_best_f1 = val_f1
+            ep_best = epoch
+            best_weights = model.state_dict()
+
+        log_performance(train_loss, train_acc, train_recall, train_f1,
+                        val_loss, val_acc, val_recall, val_f1)
+
+        print(f'epoch: {epoch+1} \t train loss: {round(train_loss, 3)} \t val loss: {round(val_loss, 3)}')
+
+    if save_best:
+        # save model name in format 'model name + batch size + epoch best + f1 score'
+        save_name = f'{model_name}_bs{batch_size}_ep{ep_best}_sc{round(val_best_f1, 3)}.pth'
+        torch.save(best_weights, osp.join(save_dir, save_name))
 
     return
 
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--epochs', default=100, help='Number of train epochs')
-    parser.add_argument('--train_batch', default=64, help='Number of train epochs')
+    parser.add_argument('--epochs', default=50, help='Number of train epochs')
+    parser.add_argument('--batch_size', default=128, help='Number of train epochs')
+    parser.add_argument('--name', default='', help='Experiment name')
+    parser.add_argument('--save_dir', default='weights', help='Experiment name')
+    parser.add_argument('--model_name', default='mobilenetv3', help='Experiment name')
+    parser.add_argument('--save_best', action="store_true", help='save model weights')
 
     args = parser.parse_args()
 
     # init wandb tracking
-    wandb.init(project = 'FL-Cancer', tags = ['Federated Learning'])
+    run = wandb.init(project = 'FL-Cancer', tags = ['Federated Learning'], name=args.name)
 
     train_config = {
         'epochs': args.epochs,
-        'train_batch': args.train_batch
+        'batch_size': args.batch_size,
+        'save_dir': args.save_dir,
+        'model_name': args.model_name
     }
 
-    data_root = 'datasets/NSCLC/manifest-1622561851074'
+    data_root = 'datasets/NSCLC'
 
     transform = transforms.Compose([
-        # transforms.Lambda(lambda x: x.repeat(3, 1, 1) if x.size(0)==1 else x),
         transforms.Resize((224, 224)),
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
     ])
 
     cancer_data = Cancer_Dataset(data_root=data_root, 
-                          tumor_info_json='data_segmentation_filtered.json',
+                        #   tumor_info_json='data_segmentation_filtered.json',
                           transform=transform)
 
-    train_loader, val_loader, test_loader = cancer_data.get_dataloaders()
+    train_loader, val_loader, test_loader = cancer_data.get_dataloaders(batch_size=args.batch_size)
 
-    model = load_model()
+    model = load_mobilenetv3_model()
 
-    train(model, train_config, train_loader, val_loader)
+    train(model, train_config, train_loader, val_loader, save_best=args.save_best)
 
     
 

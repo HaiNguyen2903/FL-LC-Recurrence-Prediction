@@ -12,6 +12,9 @@ import json
 from utils import *
 from PIL import Image
 
+from collections import defaultdict
+
+
 class Cancer_Dataset(Dataset):
     def __init__(self, data_root, tumor_info_json, max_slices=3, transform=None) -> None:
         '''
@@ -26,15 +29,102 @@ class Cancer_Dataset(Dataset):
         self.img_root = osp.join(self.data_root, 'NSCLC Radiogenomics')
         self.transform = transform
         self.max_slices = max_slices
+        self.df_meta = pd.read_csv(self.metadata_path)
         
-        with open(tumor_info_json, 'r') as f:
-            tumor_info = json.load(f)
+        # with open(tumor_info_json, 'r') as f:
+        #     tumor_info = json.load(f)
 
-        self.tumor_info = tumor_info
-        self.labels = self._get_labels()
-        self.pids = list(self.labels.keys())
+        # self.tumor_info = tumor_info
+        # self.labels = self._get_labels()
+        # self.pids = list(self.labels.keys())
 
-        self.data_list = self._gather_data_list()
+        # self.data_list = self._gather_data_list()
+
+    def _studyid_to_pid(self, stid):
+        # each patient can have multiple Study UID
+        st_dict = dict(zip(self.df_meta['Study UID'], self.df_meta['Subject ID']))
+        return st_dict[stid]
+             
+
+    def _get_study_info(self):
+        '''
+        {
+            patient_1: 
+                {
+                    'segment dir': relative path to segment dir from image root dir
+                    'CT dir': relative path to CT dir from image root dir
+                },
+            ...
+        }
+        '''
+        # get studies with segmentation
+        df_seg = self.df_meta[self.df_meta['Modality'] == 'SEG']
+
+    
+    def extract_dicom_uids(self, dicom_path):
+        try:
+            # Read the DICOM file
+            dicom_data = pydicom.dcmread(dicom_path, force=True)  # force=True ensures reading even if incomplete
+
+            # Extract UIDs
+            study_uid = dicom_data.StudyInstanceUID if hasattr(dicom_data, 'StudyInstanceUID') else None
+            series_uid = dicom_data.SeriesInstanceUID if hasattr(dicom_data, 'SeriesInstanceUID') else None
+            sop_uid = dicom_data.SOPInstanceUID if hasattr(dicom_data, 'SOPInstanceUID') else None
+
+            return study_uid, series_uid, sop_uid
+
+        except Exception as e:
+            # print(f"Error reading {dicom_path}: {e}")
+            return None, None, None
+        
+
+    def match_segments_with_scans(self):
+        # filter rows for CT scans and Segmentation
+        df_ct = self.df_meta[self.df_meta['Modality'] == 'CT']
+        df_seg = self.df_meta[self.df_meta['Modality'] == 'SEG']
+
+        # get study ids
+        seg_stids = list(df_seg['Study UID'].unique())
+
+        print(len(seg_stids))
+
+        # filter ct scans of these studies (currently missing ct scans for 3 patients in metadata file: 018, 019 and 047)
+
+        df_ct = df_ct[df_ct['Study UID'].isin(seg_stids)]
+        print(len(df_ct))
+
+        ct_locations = defaultdict(list)
+        seg_locations = defaultdict(list)
+
+        # get segmentation locations
+        for _, row in df_seg.iterrows():
+            stid = row['Study UID']
+            seg_dir = row['File Location']
+            seg_locations[stid].append(seg_dir)
+
+        # get ct locations
+        for _, row in df_ct.iterrows():
+            stid = row['Study UID']
+            ct_dir = row['File Location']
+
+            # ignore studies that don't have segmentation
+            if stid not in seg_locations:
+                continue
+
+            ct_locations[stid].append(ct_dir)
+
+
+        # for stid in seg_locations:
+        #     path = osp.join(seg_locations[stid][0], '1-1.dcm')
+        #     st_uid, sr_uid, sop_uid = self.extract_dicom_uids(path)
+
+        #     if st_uid is not None or sr_uid is not None or sop_uid is not None:
+        #         print(stid)
+        
+
+
+
+
 
     def _get_tumor_slice_indices(self, np_arr):
         slice_indices = []
@@ -194,6 +284,35 @@ class Cancer_Dataset(Dataset):
 
         return train_loader, val_loader, test_loader 
 
+def get_ct_scan_sop_instance_uids(dicom_file):
+    """
+    Extracts the SOPInstanceUIDs of CT scans referenced in a segmentation DICOM file.
+
+    Args:
+        dicom_file (str): The path to the segmentation DICOM file.
+
+    Returns:
+        list: A list of SOPInstanceUIDs in order.
+    """
+
+    ds = pydicom.dcmread(dicom_file)
+
+    # Extract the relevant information
+    sop_instance_uids = []
+
+    for d in ds.SegmentSequence:
+        print(d.ReferencedSOPInstanceUID)
+
+    # for segment in ds.SegmentSequence:
+        # referenced_sop_instance_uid = segment.SOPInstanceUID
+        # sop_instance_uids.append(referenced_sop_instance_uid)
+
+    # Sort the SOPInstanceUIDs based on their position in the segmentation file
+    # sop_instance_uids.sort(key=lambda x: int(x.split('.')[-1]))
+
+    # return sop_instance_uids
+
+
 if __name__ == '__main__':
     data_root = 'datasets/NSCLC/manifest-1622561851074'
 
@@ -208,6 +327,26 @@ if __name__ == '__main__':
                           tumor_info_json='data_segmentation_filtered.json',
                           transform=transform)
 
+    data.match_segments_with_scans()
+    exit()
+
     # train_loader, val_loader, test_loader = data.get_dataloaders()
 
-    # print(len(data.data_list))
+    df = pd.read_csv('datasets/NSCLC/manifest-1622561851074/metadata.csv')
+    label = pd.read_csv(osp.join(data_root, 'NSCLCR01Radiogenomic_DATA_LABELS_2018-05-22_1500-shifted.csv'))
+    path = osp.join(data_root, df.loc[332, 'File Location'])
+
+
+    segment_path = 'datasets/NSCLC/manifest-1622561851074/NSCLC Radiogenomics/R01-001/09-06-1990-NA-CT CHEST ABD PELVIS WITH CON-98785/1000.000000-3D Slicer segmentation result-67652/1-1.dcm'
+
+    # ds = pydicom.dcmread(osp.join(glob.glob(osp.join(path, '*.dcm'))[0]))
+    # ds = pydicom.dcmread(segment_path)
+
+    # print(ds.SOPInstanceUID)
+    # print()
+
+    # for d in ds.PerFrameFunctionXalGroupsSequence:
+    #     print(d.SOPInstanceUID)
+
+    # ct_ids = get_ct_scan_sop_instance_uids(segment_path)
+    # print(ct_ids)

@@ -10,3 +10,5 @@ EDA_segment.ipynb
 wandb
 __pycache__
 test.json
+wandb/
+weights/
